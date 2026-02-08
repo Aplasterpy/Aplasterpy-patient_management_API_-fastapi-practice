@@ -29,9 +29,10 @@ class patient_data(BaseModel):
     addhaar: UDI_check
     height: Annotated[float, Field(..., description="Enter the Patient Height in cm", example=175.5)]
     weight: Annotated[float, Field(..., description="Enter the Patient Weight in kg", example=70.5)]
-    allergies: Annotated[list[str], Field(default=None, description="Enter the Patient Allergies", example=["peanuts", "pollen", "dust"])]
+    allergies: Annotated[Optional[list[str]], Field(default=None, description="Enter the Patient Allergies")]
     married_status: Annotated[Optional[bool], Field(description="Enter the Patient Marital Status", example=True)] =None
     smoking_habbit: Annotated[Optional[bool], Field(description="Enter the Patient Smoking Habbit", example=False)] =None
+
 
     # Age validate - already done
     # Email validate
@@ -60,6 +61,20 @@ class patient_data(BaseModel):
             return "Overweight"
         else:
             return "Obese"
+# Create the pydantic class for the patient update data
+class patient_update_data(BaseModel):
+    name: Optional[str] = None
+    age: Optional[int] = Field(default=None, gt=0, lt=100)
+    gender: Optional[Literal['male', 'female', 'other']] = None
+    email: Optional[EmailStr] = None
+    contact_no: Optional[int] = None
+    address: Optional[address_data] = None
+    addhaar: Optional[UDI_check] = None
+    height: Optional[float] = None
+    weight: Optional[float] = None
+    allergies: Optional[list[str]] = None
+    married_status: Optional[bool] = None
+    smoking_habbit: Optional[bool] = None
 
 # Function to display patient data
 def display_patient_data(patient_data=patient_data):
@@ -80,9 +95,8 @@ def display_patient_data(patient_data=patient_data):
 def load_data():
     try:
         with open('post_data.json', 'r') as f:
-            data = json.load(f)
-            return data
-    except json.JSONDecodeError:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
         return {}
 
 # Create the json data store/add function
@@ -125,17 +139,77 @@ def sortdata(sort_by: str = Query(..., description="Sort by height or weight or 
 @app.post("/add_data")
 def add_data(patient: patient_data):
     data = load_data()
-    id = patient.id.lower()
-    if patient.id in data: 
+    pid = patient.id.lower()
+
+    if pid in data:
         raise HTTPException(status_code=400, detail='User ID is already exists')
-    data[patient.id] = patient.model_dump(exclude=['id'])
-    
-    # Save or add the data into the json file.
+
+    data[pid] = patient.model_dump(exclude=['id'])
     data_store(data)
+
     return JSONResponse(status_code=201, content={"message": "Patient data created successfully"})
     
-# Create the put route for the update data
+# Create the Update route for the update data - put method
+@app.put("/update/{patient_id}")
+def updated_data(patient_id: str, updated_patient: patient_update_data):
+    # load the data
+    data = load_data()
+    patient_id = patient_id.lower()
+    # check the data is exist or not
+    if patient_id not in data:
+        raise HTTPException(status_code=404, detail='Patient ID not found!')
+    # exixting patient data [it in a dict format data]
+    existing_patient_data =data[patient_id]
+    # convert pydantic model to dict using model_dump() [Becasue existing data is in dict format
+    # and updated data is in pydantic model format] 
+    updated_patient_data = updated_patient.model_dump(exclude_unset=True)
+    # store the updated data into the existing data using key and value. key basically target the id
+    for key, value in updated_patient_data.items():
+        existing_patient_data[key] = value
+    # existing patient data convert into pydantic model for update the BMI and verdict
+    # and then again convert pydantic model to dict for update the data in json file also 
+    # add the id in the patient_data [main model] [Becasue the id is missing in the updated patient model]
+    existing_patient_data['id'] = patient_id
+    # pydantoc object creation in the main model.
+    updated_patient_pydantic_obj = patient_data(**existing_patient_data)
+    updated_patient_dict = updated_patient_pydantic_obj.model_dump(exclude=['id'])
+    # add this dict to data
+    data[patient_id] = updated_patient_dict
+    # save the model
+    data_store(data)
+    return JSONResponse(status_code=200, content={"message": "Patient data updated successfully"})
+# Create the delete route for the delete data - delete method
+@app.delete("/delete/{patient_id}")
+def delete_data(patient_id: str):
+    data = load_data()
+    if patient_data not in data:
+        raise HTTPException(status_code=404, detail = 'Patient ID not found!')
+    
+    # if data is exist, delete the data
+    del data[patient_id]   
+    data_store(data)
+    # after delete the data, return the success message
+    raise HTTPException(status_code=200, detail="Patient data deleted successfully!")
 
-# Create the delete route for the delete data
-
-# Create the patch route for the update data
+# Create the patch route for the update data - patch method
+@app.patch("/edit/{patient_id}")
+def patch_update_data(patient_id: str, updated_patient: patient_update_data):
+    # load the data
+    data =load_data()
+    # Check the patient id in exists or not
+    if patient_id not in data:
+        raise HTTPException(status_code=404, detail='patient ID not found!')
+    existing_patient_data = data[patient_id]
+    
+    update_patient_data = updated_patient.model_dump(exclude_unset=True)
+    
+    for key, value in update_patient_data.items():
+        existing_patient_data[key] = value
+        
+    updated_patient_obj = patient_data(id=patient_id, **existing_patient_data)
+    updated_patient_data_dict = updated_patient_obj.model_dump(exclude=['id'])
+    data[patient_id] = updated_patient_data_dict
+    
+    # save the data
+    data_store(data)
+    return JSONResponse(status_code=200, content={"message": "patient data updated successfully!"})
